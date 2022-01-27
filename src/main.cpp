@@ -16,7 +16,7 @@ int main(int argc, char* argv[])
     BOOST_LOG_TRIVIAL(info) << "- Database: " << (opts->DbFile() == ":memory:" ? "(in-memory)" : opts->DbFile());
 
     boost::asio::io_context io;
-    boost::asio::signal_set signals(io, SIGINT);
+    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
 
     signals.async_wait(
         [&](boost::system::error_code ec, int signal)
