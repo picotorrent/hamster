@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "hamster",
+  "version-string": "1",
+  "dependencies": [
+    "boost-beast",
+    "boost-log",
+    "boost-program-options",
+    "boost-system",
+    "libtorrent",
+    "nlohmann-json",
+    "sqlite3"
+  ]
+}
