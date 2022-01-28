@@ -2,9 +2,11 @@
 
 #include <map>
 #include <memory>
+#include <unordered_set>
 
 #include <boost/asio.hpp>
 #include <libtorrent/fwd.hpp>
+#include <libtorrent/info_hash.hpp>
 #include <sqlite3.h>
 
 namespace hamster
@@ -22,6 +24,8 @@ namespace hamster
         ~LibtorrentIndexer() noexcept override;
 
     private:
+        struct NodeInfo;
+
         void PopAlerts();
         void SampleInfohashes(boost::system::error_code ec);
 
@@ -30,5 +34,7 @@ namespace hamster
 
         sqlite3* m_db;
         std::unique_ptr<libtorrent::session> m_session;
+        std::map<boost::asio::ip::udp::endpoint, NodeInfo> m_nodes;
+        std::unordered_set<lt::info_hash_t> m_hashes;
     };
 }

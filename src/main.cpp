@@ -1,5 +1,6 @@
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/log/expressions.hpp>
 #include <boost/log/trivial.hpp>
 
 #include <sqlite3.h>
@@ -12,6 +13,9 @@
 int main(int argc, char* argv[])
 {
     auto const opts = hamster::Options::Parse(argc, argv);
+
+    boost::log::core::get()->set_filter(
+        boost::log::trivial::severity >= opts->LogLevel());
 
     BOOST_LOG_TRIVIAL(info) << "Hamster";
     BOOST_LOG_TRIVIAL(info) << "- Database: " << (opts->DbFile() == ":memory:" ? "(in-memory)" : opts->DbFile());

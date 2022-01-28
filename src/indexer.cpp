@@ -9,13 +9,17 @@
 #include <libtorrent/session.hpp>
 #include <sqlite3.h>
 
-#include "models/node.hpp"
-#include "models/sample.hpp"
 #include "models/torrent.hpp"
 
 namespace fs = std::filesystem;
 namespace lt = libtorrent;
 using hamster::LibtorrentIndexer;
+using namespace std::literals::chrono_literals;
+
+struct LibtorrentIndexer::NodeInfo
+{
+    lt::time_point nextRequest;
+};
 
 LibtorrentIndexer::LibtorrentIndexer(boost::asio::io_context &io, sqlite3* db)
     : m_io(io),
@@ -42,14 +46,20 @@ LibtorrentIndexer::LibtorrentIndexer(boost::asio::io_context &io, sqlite3* db)
     m_timer.async_wait([this](auto && PH1) { SampleInfohashes(std::forward<decltype(PH1)>(PH1)); });
 }
 
-LibtorrentIndexer::~LibtorrentIndexer() noexcept = default;
+LibtorrentIndexer::~LibtorrentIndexer() noexcept
+{
+    m_session->set_alert_notify([] {});
+    m_timer.cancel();
+}
 
 void LibtorrentIndexer::PopAlerts()
 {
+    static const lt::clock_type::duration minRequestInterval = 5min;
+
     std::vector<lt::alert*> alerts;
     m_session->pop_alerts(&alerts);
 
-    auto const now = std::chrono::system_clock::now();
+    auto const now = lt::clock_type::now();
 
     for (const auto& alert : alerts)
     {
@@ -61,9 +71,10 @@ void LibtorrentIndexer::PopAlerts()
             {
                 auto const a = lt::alert_cast<lt::dht_pkt_alert>(alert);
 
-                Models::Node::Exists(m_db, a->node)
-                    ? Models::Node::Update(m_db, a->node, now, std::chrono::system_clock::time_point::min())
-                    : Models::Node::Create(m_db, a->node, now, std::chrono::system_clock::time_point::min());
+                if (m_nodes.find(a->node) == m_nodes.end())
+                {
+                    m_nodes.insert({ a->node, { lt::time_point::min() }});
+                }
             } break;
 
             case lt::dht_sample_infohashes_alert::alert_type:
@@ -73,6 +84,13 @@ void LibtorrentIndexer::PopAlerts()
                 for (const auto& hash : a->samples())
                 {
                     auto const ih = lt::info_hash_t(hash);
+
+                    if (m_hashes.find(ih) != m_hashes.end())
+                    {
+                        continue;
+                    }
+
+                    BOOST_LOG_TRIVIAL(debug) << "Added torrent " << ih;
 
                     lt::add_torrent_params params;
                     params.flags &= ~lt::torrent_flags::auto_managed;
@@ -84,24 +102,20 @@ void LibtorrentIndexer::PopAlerts()
                     params.save_path = fs::temp_directory_path();
 
                     m_session->async_add_torrent(params);
-
-                    if (!Models::Sample::Exists(m_db, ih))
-                    {
-                        Models::Sample::Insert(m_db, ih);
-                    }
+                    m_hashes.insert(ih);
                 }
 
-                std::vector<boost::asio::ip::udp::endpoint> endpoints;
-                for (auto const& [_, value] : a->nodes()) { endpoints.push_back(value); }
+                for (auto const& [_, endpoint] : a->nodes())
+                {
+                    auto it = m_nodes.find(endpoint);
 
-                auto const interval = std::chrono::seconds(
-                    lt::duration_cast<lt::seconds>(a->interval).count());
+                    if (it == m_nodes.end())
+                    {
+                        it = m_nodes.insert({ endpoint, { lt::time_point::min() }}).first;
+                    }
 
-                Models::Node::BatchUpdate(
-                    m_db,
-                    endpoints,
-                    now,
-                    now + std::max(interval, std::chrono::seconds(300)));
+                    it->second.nextRequest = now + std::max(a->interval, minRequestInterval);
+                }
             } break;
 
             case lt::metadata_received_alert::alert_type:
@@ -111,10 +125,6 @@ void LibtorrentIndexer::PopAlerts()
                 Models::Torrent::Insert(
                     m_db,
                     *a->handle.torrent_file());
-
-                Models::Sample::Delete(
-                    m_db,
-                    a->handle.info_hashes());
 
                 BOOST_LOG_TRIVIAL(info) << "Torrent indexed: " << a->torrent_name();
 
@@ -128,31 +138,35 @@ void LibtorrentIndexer::PopAlerts()
 
 void LibtorrentIndexer::SampleInfohashes(boost::system::error_code ec)
 {
+    if (ec) { return; }
+
     static std::random_device dev;
     static std::mt19937 rng(dev());
     static std::uniform_int_distribution<std::mt19937::result_type> dist(
         std::numeric_limits<std::uint8_t>::min(),
         std::numeric_limits<std::uint8_t>::max());
 
-    auto const now = std::chrono::system_clock::now();
+    auto const now = lt::clock_type::now();
 
-    std::vector<boost::asio::ip::udp::endpoint> endpoints;
+    auto it = std::find_if(
+        m_nodes.begin(),
+        m_nodes.end(),
+        [now](auto const& n) { return n.second.nextRequest < now; });
 
-    Models::Node::GetWhereNextRequestExpired(
-        m_db,
-        now,
-        [&](const boost::asio::ip::udp::endpoint& endpoint)
-        {
-            lt::sha1_hash hash;
-            for (auto& b : hash) { b = dist(rng); }
-            m_session->dht_sample_infohashes(endpoint, hash);
-            endpoints.push_back(endpoint);
-        });
+    int sampled = 0;
 
-    Models::Node::BatchUpdateNextRequest(
-        m_db,
-        endpoints,
-        now + std::chrono::minutes(5));
+    for (;it != m_nodes.end(); it++)
+    {
+        it->second.nextRequest = now + 1h;
+
+        lt::sha1_hash hash;
+        for (auto& b : hash) { b = dist(rng); }
+
+        m_session->dht_sample_infohashes(it->first, hash);
+        sampled += 1;
+    }
+
+    BOOST_LOG_TRIVIAL(debug) << "Sampled " << sampled << " of " << m_nodes.size() << " node(s)";
 
     m_timer.expires_from_now(boost::posix_time::seconds(5), ec);
     m_timer.async_wait([this](auto && PH1) { SampleInfohashes(std::forward<decltype(PH1)>(PH1)); });

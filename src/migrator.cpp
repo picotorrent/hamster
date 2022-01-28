@@ -68,11 +68,35 @@ int Migration_0001_Init(sqlite3* db)
     return SQLITE_OK;
 }
 
+int Migration_0002_RemoveUnnecessaryTables(sqlite3* db)
+{
+    int res = sqlite3_exec(
+        db,
+        "DROP TABLE nodes;",
+        nullptr,
+        nullptr,
+        nullptr);
+
+    if (res != SQLITE_OK) return res;
+
+    res = sqlite3_exec(
+        db,
+        "DROP TABLE samples;",
+        nullptr,
+        nullptr,
+        nullptr);
+
+    if (res != SQLITE_OK) return res;
+
+    return SQLITE_OK;
+}
+
 bool hamster::MigrateDatabase(sqlite3* db)
 {
     static std::vector<std::function<int(sqlite3*)>> migrations =
     {
-        { &Migration_0001_Init }
+        { &Migration_0001_Init },
+        { &Migration_0002_RemoveUnnecessaryTables }
     };
 
     // Get current user_version
