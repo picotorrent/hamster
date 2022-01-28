@@ -17,6 +17,7 @@ find_package(unofficial-sqlite3  CONFIG REQUIRED)
 
 add_executable(
     hamster
+    src/database.cpp
     src/indexer.cpp
     src/main.cpp
     src/migrator.cpp

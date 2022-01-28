@@ -16,7 +16,6 @@
 namespace fs = std::filesystem;
 namespace lt = libtorrent;
 using hamster::LibtorrentIndexer;
-using namespace std::literals::chrono_literals;
 
 LibtorrentIndexer::LibtorrentIndexer(boost::asio::io_context &io, sqlite3* db)
     : m_io(io),
@@ -58,16 +57,9 @@ void LibtorrentIndexer::PopAlerts()
 
         switch (alert->type())
         {
-            case lt::add_torrent_alert::alert_type:
-            {
-                auto a = lt::alert_cast<lt::add_torrent_alert>(alert);
-
-
-            } break;
-
             case lt::dht_pkt_alert::alert_type:
             {
-                auto a = lt::alert_cast<lt::dht_pkt_alert>(alert);
+                auto const a = lt::alert_cast<lt::dht_pkt_alert>(alert);
 
                 Models::Node::Exists(m_db, a->node)
                     ? Models::Node::Update(m_db, a->node, now, std::chrono::system_clock::time_point::min())
@@ -76,7 +68,7 @@ void LibtorrentIndexer::PopAlerts()
 
             case lt::dht_sample_infohashes_alert::alert_type:
             {
-                auto a = lt::alert_cast<lt::dht_sample_infohashes_alert>(alert);
+                auto const a = lt::alert_cast<lt::dht_sample_infohashes_alert>(alert);
 
                 for (const auto& hash : a->samples())
                 {
@@ -114,7 +106,7 @@ void LibtorrentIndexer::PopAlerts()
 
             case lt::metadata_received_alert::alert_type:
             {
-                auto a = lt::alert_cast<lt::metadata_received_alert>(alert);
+                auto const a = lt::alert_cast<lt::metadata_received_alert>(alert);
 
                 Models::Torrent::Insert(
                     m_db,
@@ -160,7 +152,7 @@ void LibtorrentIndexer::SampleInfohashes(boost::system::error_code ec)
     Models::Node::BatchUpdateNextRequest(
         m_db,
         endpoints,
-        now + 1h);
+        now + std::chrono::minutes(5));
 
     m_timer.expires_from_now(boost::posix_time::seconds(5), ec);
     m_timer.async_wait([this](auto && PH1) { SampleInfohashes(std::forward<decltype(PH1)>(PH1)); });

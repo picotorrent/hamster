@@ -4,6 +4,7 @@
 
 #include <sqlite3.h>
 
+#include "database.hpp"
 #include "indexer.hpp"
 #include "migrator.hpp"
 #include "options.hpp"
@@ -15,18 +16,7 @@ int main(int argc, char* argv[])
     BOOST_LOG_TRIVIAL(info) << "Hamster";
     BOOST_LOG_TRIVIAL(info) << "- Database: " << (opts->DbFile() == ":memory:" ? "(in-memory)" : opts->DbFile());
 
-    boost::asio::io_context io;
-    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-
-    signals.async_wait(
-        [&](boost::system::error_code ec, int signal)
-        {
-            BOOST_LOG_TRIVIAL(info) << "Interrupt (" << signal << ") received - shutting down...";
-            io.stop();
-        });
-
-    sqlite3* db;
-    sqlite3_open(opts->DbFile().c_str(), &db);
+    sqlite3* db = hamster::OpenDatabase(opts->DbFile());
 
     if (!hamster::MigrateDatabase(db))
     {
@@ -36,6 +26,16 @@ int main(int argc, char* argv[])
             << ". Exiting...";
         return -1;
     }
+
+    boost::asio::io_context io;
+    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+
+    signals.async_wait(
+        [&](boost::system::error_code ec, int signal)
+        {
+            BOOST_LOG_TRIVIAL(info) << "Interrupt (" << signal << ") received - shutting down...";
+            io.stop();
+        });
 
     hamster::LibtorrentIndexer indexer(io, db);
 
